@@ -59,7 +59,7 @@ async function saveServices(services) {
 async function scheduleService(service) {
 
   if (!service || !service.enabled) {
-    return;
+    return null;
   }
 
   const minutes = randomMinutes(
@@ -82,6 +82,13 @@ async function scheduleService(service) {
   console.log(
     `Service "${service.name}" scheduled in ${minutes.toFixed(1)} minutes`
   );
+
+
+  // Return the EXACT schedule that was created.
+  return {
+    when,
+    minutes
+  };
 }
 
 
@@ -538,13 +545,62 @@ async function runService(serviceId) {
     }
 
 
-    console.log(
-      `Sending "${service.name}" to Telegram...`
+    // --------------------------------------------------
+    // Schedule the NEXT run
+    // --------------------------------------------------
+
+    // IMPORTANT:
+    // We schedule only ONCE here and use the exact
+    // returned time for the Telegram caption.
+
+    const nextSchedule =
+      await scheduleService(
+        service
+      );
+
+
+    let caption =
+      `📸 ${service.name}`;
+
+
+    if (nextSchedule) {
+
+      const nextDate =
+        new Date(
+          nextSchedule.when
+        );
+
+
+      const hours =
+        String(
+          nextDate.getHours()
+        ).padStart(2, "0");
+
+
+      const minutes =
+        String(
+          nextDate.getMinutes()
+        ).padStart(2, "0");
+
+
+      const minutesLater =
+        nextSchedule.minutes.toFixed(1);
+
+
+      caption +=
+        `\nNext Screen: ${hours}:${minutes} (${minutesLater} min later)`;
+    }
+
+
+    // Save service data.
+    await saveServices(
+      data.services
     );
 
 
-    const caption =
-      `📸 ${service.name}`;
+    console.log(
+      `Sending "${service.name}" to Telegram...`
+    );
 
 
     await sendScreenshotToTelegram(
@@ -566,13 +622,15 @@ async function runService(serviceId) {
       `Error running "${service.name}":`,
       error
     );
+
+
+    // If the screenshot/send process failed,
+    // schedule the next run here.
+
+    await scheduleService(
+      service
+    );
   }
-
-
-  // Always schedule next run.
-  await scheduleService(
-    service
-  );
 }
 
 
