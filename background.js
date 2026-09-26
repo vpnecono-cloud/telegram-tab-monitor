@@ -2,6 +2,8 @@ const TELEGRAM_API = "https://api.telegram.org/bot";
 
 const ALARM_PREFIX = "service_";
 
+const TEHRAN_TIME_ZONE = "Asia/Tehran";
+
 
 // --------------------------------------------------
 // Utility
@@ -27,6 +29,316 @@ function randomMinutes(min, max) {
 
 function alarmName(serviceId) {
   return `${ALARM_PREFIX}${serviceId}`;
+}
+
+
+// --------------------------------------------------
+// Tehran Time
+// --------------------------------------------------
+
+function getTehranParts(timestamp = Date.now()) {
+
+  const formatter =
+    new Intl.DateTimeFormat(
+      "en-US",
+      {
+        timeZone: TEHRAN_TIME_ZONE,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hourCycle: "h23"
+      }
+    );
+
+
+  const parts =
+    formatter.formatToParts(
+      new Date(timestamp)
+    );
+
+
+  const result = {};
+
+
+  for (const part of parts) {
+
+    if (part.type !== "literal") {
+
+      result[part.type] =
+        Number(part.value);
+    }
+  }
+
+
+  return result;
+}
+
+
+function formatTehranTime(timestamp) {
+
+  return new Intl.DateTimeFormat(
+    "en-GB",
+    {
+      timeZone: TEHRAN_TIME_ZONE,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    }
+  ).format(
+    new Date(timestamp)
+  );
+}
+
+
+function formatSystemTime(timestamp) {
+
+  return new Date(timestamp)
+    .toLocaleTimeString(
+      "en-GB",
+      {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false
+      }
+    );
+}
+
+
+// --------------------------------------------------
+// Sleep Mode
+// --------------------------------------------------
+
+function parseTimeToMinutes(value) {
+
+  if (
+    !value ||
+    !/^\d{2}:\d{2}$/.test(value)
+  ) {
+    return null;
+  }
+
+
+  const [hour, minute] =
+    value
+      .split(":")
+      .map(Number);
+
+
+  if (
+    hour < 0 ||
+    hour > 23 ||
+    minute < 0 ||
+    minute > 59
+  ) {
+    return null;
+  }
+
+
+  return (
+    hour * 60 +
+    minute
+  );
+}
+
+
+function isInSleepWindow(
+  service,
+  timestamp = Date.now()
+) {
+
+  if (!service.sleepEnabled) {
+    return false;
+  }
+
+
+  const start =
+    parseTimeToMinutes(
+      service.sleepStart
+    );
+
+
+  const end =
+    parseTimeToMinutes(
+      service.sleepEnd
+    );
+
+
+  if (
+    start === null ||
+    end === null ||
+    start === end
+  ) {
+    return false;
+  }
+
+
+  const tehran =
+    getTehranParts(
+      timestamp
+    );
+
+
+  const currentMinutes =
+    tehran.hour * 60 +
+    tehran.minute;
+
+
+  // Example:
+  // 01:00 -> 06:00
+  if (start < end) {
+
+    return (
+      currentMinutes >= start &&
+      currentMinutes < end
+    );
+  }
+
+
+  // Overnight:
+  // 23:00 -> 06:00
+  return (
+    currentMinutes >= start ||
+    currentMinutes < end
+  );
+}
+
+
+function getTehranOffsetMs(timestamp) {
+
+  const tehran =
+    getTehranParts(
+      timestamp
+    );
+
+
+  const utcRepresentation =
+    Date.UTC(
+      tehran.year,
+      tehran.month - 1,
+      tehran.day,
+      tehran.hour,
+      tehran.minute,
+      tehran.second
+    );
+
+
+  return (
+    utcRepresentation -
+    Math.floor(timestamp / 1000) * 1000
+  );
+}
+
+
+function getSleepEndTimestamp(
+  service,
+  timestamp = Date.now()
+) {
+
+  const start =
+    parseTimeToMinutes(
+      service.sleepStart
+    );
+
+
+  const end =
+    parseTimeToMinutes(
+      service.sleepEnd
+    );
+
+
+  if (
+    start === null ||
+    end === null
+  ) {
+    return timestamp;
+  }
+
+
+  const tehran =
+    getTehranParts(
+      timestamp
+    );
+
+
+  const currentMinutes =
+    tehran.hour * 60 +
+    tehran.minute;
+
+
+  let targetYear =
+    tehran.year;
+
+
+  let targetMonth =
+    tehran.month;
+
+
+  let targetDay =
+    tehran.day;
+
+
+  // If the sleep window crosses midnight
+  // and we are already after the start,
+  // the end time is tomorrow.
+  if (
+    start > end &&
+    currentMinutes >= start
+  ) {
+
+    const temp =
+      new Date(
+        Date.UTC(
+          targetYear,
+          targetMonth - 1,
+          targetDay
+        )
+      );
+
+
+    temp.setUTCDate(
+      temp.getUTCDate() + 1
+    );
+
+
+    targetYear =
+      temp.getUTCFullYear();
+
+    targetMonth =
+      temp.getUTCMonth() + 1;
+
+    targetDay =
+      temp.getUTCDate();
+  }
+
+
+  // Start with an approximate UTC timestamp.
+  let candidate =
+    Date.UTC(
+      targetYear,
+      targetMonth - 1,
+      targetDay,
+      Math.floor(end / 60),
+      end % 60,
+      0,
+      0
+    );
+
+
+  // Correct the candidate using the actual
+  // Tehran timezone offset.
+  const offset =
+    getTehranOffsetMs(
+      candidate
+    );
+
+
+  candidate -= offset;
+
+
+  return candidate;
 }
 
 
@@ -58,17 +370,51 @@ async function saveServices(services) {
 
 async function scheduleService(service) {
 
-  if (!service || !service.enabled) {
+  if (
+    !service ||
+    !service.enabled
+  ) {
     return null;
   }
 
-  const minutes = randomMinutes(
-    service.minMinutes,
-    service.maxMinutes
-  );
 
-  const when =
-    Date.now() + minutes * 60 * 1000;
+  const randomDelay =
+    randomMinutes(
+      service.minMinutes,
+      service.maxMinutes
+    );
+
+
+  let when =
+    Date.now() +
+    randomDelay * 60 * 1000;
+
+
+  // If the random next run falls inside
+  // the sleep window, move it to sleep end.
+  if (
+    isInSleepWindow(
+      service,
+      when
+    )
+  ) {
+
+    when =
+      getSleepEndTimestamp(
+        service,
+        when
+      );
+  }
+
+
+  const actualMinutes =
+    Math.max(
+      0,
+      (
+        when -
+        Date.now()
+      ) / 60000
+    );
 
 
   await chrome.alarms.create(
@@ -80,14 +426,14 @@ async function scheduleService(service) {
 
 
   console.log(
-    `Service "${service.name}" scheduled in ${minutes.toFixed(1)} minutes`
+    `Service "${service.name}" scheduled in ${actualMinutes.toFixed(1)} minutes`
   );
 
 
-  // Return the EXACT schedule that was created.
+  // Return the EXACT schedule created.
   return {
     when,
-    minutes
+    minutes: actualMinutes
   };
 }
 
@@ -107,6 +453,7 @@ async function getTargetTab(service) {
           service.tabId
         );
 
+
       if (tab) {
         return tab;
       }
@@ -125,8 +472,9 @@ async function getTargetTab(service) {
 
 
     const matchingTab =
-      tabs.find(tab =>
-        tab.url === service.url
+      tabs.find(
+        tab =>
+          tab.url === service.url
       );
 
 
@@ -160,18 +508,24 @@ function waitForTabComplete(
         return;
       }
 
+
       finished = true;
+
 
       chrome.tabs.onUpdated.removeListener(
         listener
       );
+
 
       resolve();
     };
 
 
     const listener =
-      (updatedTabId, changeInfo) => {
+      (
+        updatedTabId,
+        changeInfo
+      ) => {
 
         if (
           updatedTabId === tabId &&
@@ -201,7 +555,11 @@ function waitForTabComplete(
 
 async function waitForPageReady(tabId) {
 
-  for (let i = 0; i < 20; i++) {
+  for (
+    let i = 0;
+    i < 20;
+    i++
+  ) {
 
     try {
 
@@ -323,8 +681,9 @@ async function sendScreenshotToTelegram(
   const blob =
     await fetch(
       imageDataUrl
-    ).then(response =>
-      response.blob()
+    ).then(
+      response =>
+        response.blob()
     );
 
 
@@ -413,6 +772,28 @@ async function runService(serviceId) {
   }
 
 
+  // --------------------------------------------------
+  // Sleep Mode Check
+  // --------------------------------------------------
+
+  if (
+    isInSleepWindow(service)
+  ) {
+
+    console.log(
+      `Service "${service.name}" is currently in sleep mode.`
+    );
+
+
+    await scheduleService(
+      service
+    );
+
+
+    return;
+  }
+
+
   if (
     !data.botToken ||
     !data.chatId
@@ -422,7 +803,11 @@ async function runService(serviceId) {
       "Telegram Bot Token or Chat ID is missing."
     );
 
-    await scheduleService(service);
+
+    await scheduleService(
+      service
+    );
+
 
     return;
   }
@@ -431,7 +816,9 @@ async function runService(serviceId) {
   try {
 
     let tab =
-      await getTargetTab(service);
+      await getTargetTab(
+        service
+      );
 
 
     if (!tab) {
@@ -445,6 +832,7 @@ async function runService(serviceId) {
     // Save latest tab information.
     service.tabId =
       tab.id;
+
 
     service.windowId =
       tab.windowId;
@@ -470,6 +858,28 @@ async function runService(serviceId) {
 
 
     await sleep(1000);
+
+
+    // --------------------------------------------------
+    // Check Sleep Again Before Refresh
+    // --------------------------------------------------
+
+    if (
+      isInSleepWindow(service)
+    ) {
+
+      console.log(
+        `Service "${service.name}" entered sleep mode before refresh.`
+      );
+
+
+      await scheduleService(
+        service
+      );
+
+
+      return;
+    }
 
 
     // Refresh.
@@ -500,6 +910,28 @@ async function runService(serviceId) {
     await sleep(5000);
 
 
+    // --------------------------------------------------
+    // Check Sleep Again Before Screenshot
+    // --------------------------------------------------
+
+    if (
+      isInSleepWindow(service)
+    ) {
+
+      console.log(
+        `Service "${service.name}" entered sleep mode before screenshot.`
+      );
+
+
+      await scheduleService(
+        service
+      );
+
+
+      return;
+    }
+
+
     console.log(
       `Capturing "${service.name}"...`
     );
@@ -511,7 +943,11 @@ async function runService(serviceId) {
     let lastError = null;
 
 
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (
+      let attempt = 1;
+      attempt <= 3;
+      attempt++
+    ) {
 
       try {
 
@@ -520,16 +956,20 @@ async function runService(serviceId) {
             tab.id
           );
 
+
         break;
 
       } catch (error) {
 
-        lastError = error;
+        lastError =
+          error;
+
 
         console.warn(
           `Screenshot attempt ${attempt} failed:`,
           error.message
         );
+
 
         await sleep(3000);
       }
@@ -549,10 +989,6 @@ async function runService(serviceId) {
     // Schedule the NEXT run
     // --------------------------------------------------
 
-    // IMPORTANT:
-    // We schedule only ONCE here and use the exact
-    // returned time for the Telegram caption.
-
     const nextSchedule =
       await scheduleService(
         service
@@ -565,22 +1001,16 @@ async function runService(serviceId) {
 
     if (nextSchedule) {
 
-      const nextDate =
-        new Date(
+      const systemNextTime =
+        formatSystemTime(
           nextSchedule.when
         );
 
 
-      const hours =
-        String(
-          nextDate.getHours()
-        ).padStart(2, "0");
-
-
-      const minutes =
-        String(
-          nextDate.getMinutes()
-        ).padStart(2, "0");
+      const tehranNextTime =
+        formatTehranTime(
+          nextSchedule.when
+        );
 
 
       const minutesLater =
@@ -588,7 +1018,11 @@ async function runService(serviceId) {
 
 
       caption +=
-        `\nNext Screen: ${hours}:${minutes} (${minutesLater} min later)`;
+        `\nNext Screen: ${systemNextTime} (${minutesLater} min later)`;
+
+
+      caption +=
+        `\nTehran Next Screen: ${tehranNextTime}`;
     }
 
 
@@ -626,7 +1060,6 @@ async function runService(serviceId) {
 
     // If the screenshot/send process failed,
     // schedule the next run here.
-
     await scheduleService(
       service
     );
@@ -668,13 +1101,18 @@ chrome.alarms.onAlarm.addListener(
 // --------------------------------------------------
 
 chrome.runtime.onMessage.addListener(
-  (message, sender, sendResponse) => {
+  (
+    message,
+    sender,
+    sendResponse
+  ) => {
 
     handleMessage(message)
       .then(sendResponse)
       .catch(error => {
 
         console.error(error);
+
 
         sendResponse({
           success: false,
@@ -757,6 +1195,12 @@ async function handleMessage(message) {
           message.maxMinutes
         ),
 
+      sleepEnabled: false,
+
+      sleepStart: "23:00",
+
+      sleepEnd: "06:00",
+
       enabled: false
     };
 
@@ -812,6 +1256,22 @@ async function handleMessage(message) {
       Number(
         message.maxMinutes
       );
+
+
+    service.sleepEnabled =
+      Boolean(
+        message.sleepEnabled
+      );
+
+
+    service.sleepStart =
+      message.sleepStart ||
+      "23:00";
+
+
+    service.sleepEnd =
+      message.sleepEnd ||
+      "06:00";
 
 
     await saveServices(

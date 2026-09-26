@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+
 <html lang="en">
 
 <head>
@@ -10,119 +11,271 @@
   <style>
 
     body {
+
       width: 420px;
+
       font-family: Arial, sans-serif;
+
       padding: 15px;
+
       margin: 0;
+
       background: #f5f5f5;
+
     }
+
 
     h2 {
+
       margin-top: 0;
+
     }
+
 
     h3 {
+
       margin-bottom: 8px;
+
     }
+
 
     .section {
+
       background: white;
+
       padding: 12px;
+
       border-radius: 8px;
+
       margin-bottom: 12px;
+
     }
+
 
     label {
+
       display: block;
+
       font-size: 13px;
+
       margin-top: 8px;
+
       margin-bottom: 4px;
+
     }
+
 
     input {
+
       width: 100%;
+
       box-sizing: border-box;
+
       padding: 7px;
+
       border: 1px solid #ccc;
+
       border-radius: 5px;
+
     }
+
+
+    input[type="checkbox"] {
+
+      width: auto;
+
+    }
+
 
     button {
+
       border: none;
+
       padding: 7px 10px;
+
       border-radius: 5px;
+
       cursor: pointer;
+
       margin-top: 8px;
+
       margin-right: 4px;
+
     }
+
 
     button:hover {
+
       opacity: 0.85;
+
     }
+
 
     .primary {
+
       background: #2196f3;
+
       color: white;
+
     }
+
 
     .success {
+
       background: #4caf50;
+
       color: white;
+
     }
+
 
     .danger {
+
       background: #f44336;
+
       color: white;
+
     }
+
 
     .secondary {
+
       background: #ddd;
+
       color: #222;
+
     }
+
 
     .service {
+
       border: 1px solid #ddd;
+
       padding: 10px;
+
       border-radius: 7px;
+
       margin-bottom: 10px;
+
       background: #fafafa;
+
     }
+
 
     .service-header {
+
       display: flex;
+
       justify-content: space-between;
+
       align-items: center;
+
     }
+
 
     .service-name {
+
       font-weight: bold;
+
       font-size: 15px;
+
     }
+
 
     .status {
+
       font-size: 12px;
+
     }
+
 
     .tab-info {
+
       font-size: 11px;
+
       color: #666;
+
       margin-top: 6px;
+
       word-break: break-all;
+
     }
+
 
     .row {
+
       display: flex;
+
       gap: 8px;
+
     }
+
 
     .row > div {
+
       flex: 1;
+
     }
 
+
+    .sleep-box {
+
+      margin-top: 10px;
+
+      padding: 8px;
+
+      border: 1px solid #ddd;
+
+      border-radius: 6px;
+
+      background: #fff;
+
+    }
+
+
+    .sleep-title {
+
+      font-size: 13px;
+
+      font-weight: bold;
+
+      margin-bottom: 5px;
+
+    }
+
+
+    .sleep-toggle {
+
+      display: flex;
+
+      align-items: center;
+
+      gap: 6px;
+
+      font-size: 13px;
+
+      margin-top: 8px;
+
+    }
+
+
+    .sleep-toggle input {
+
+      margin: 0;
+
+      width: auto;
+
+    }
+
+
     #message {
+
       font-size: 12px;
+
       margin-bottom: 10px;
+
       color: #333;
+
     }
 
   </style>
@@ -143,6 +296,7 @@
 
     <h3>Telegram</h3>
 
+
     <label>Bot Token</label>
 
     <input
@@ -151,6 +305,7 @@
       placeholder="123456789:ABC..."
     >
 
+
     <label>Chat ID</label>
 
     <input
@@ -158,6 +313,7 @@
       id="chatId"
       placeholder="6866921733"
     >
+
 
     <button
       class="primary"
@@ -174,6 +330,7 @@
   <div class="section">
 
     <h3>Add Service</h3>
+
 
     <label>Service Name</label>
 
