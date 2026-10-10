@@ -1,8 +1,11 @@
 const TELEGRAM_API = "https://api.telegram.org/bot";
 
 const ALARM_PREFIX = "service_";
+const TELEGRAM_POLL_ALARM = "telegram_command_poll";
 
 const TEHRAN_TIME_ZONE = "Asia/Tehran";
+
+let telegramPollInProgress = false;
 
 
 // --------------------------------------------------
@@ -741,7 +744,9 @@ async function sendScreenshotToTelegram(
 // Run service
 // --------------------------------------------------
 
-async function runService(serviceId) {
+async function runService(serviceId, options = {}) {
+
+  const manual = options.manual === true;
 
   const data =
     await getData();
@@ -762,7 +767,7 @@ async function runService(serviceId) {
   }
 
 
-  if (!service.enabled) {
+  if (!service.enabled && !manual) {
 
     console.log(
       `Service "${service.name}" is disabled.`
@@ -773,10 +778,11 @@ async function runService(serviceId) {
 
 
   // --------------------------------------------------
-  // Sleep Mode Check
+  // Sleep Mode Check (manual Telegram commands bypass sleep)
   // --------------------------------------------------
 
   if (
+    !manual &&
     isInSleepWindow(service)
   ) {
 
@@ -865,6 +871,7 @@ async function runService(serviceId) {
     // --------------------------------------------------
 
     if (
+      !manual &&
       isInSleepWindow(service)
     ) {
 
@@ -915,6 +922,7 @@ async function runService(serviceId) {
     // --------------------------------------------------
 
     if (
+      !manual &&
       isInSleepWindow(service)
     ) {
 
@@ -989,14 +997,14 @@ async function runService(serviceId) {
     // Schedule the NEXT run
     // --------------------------------------------------
 
-    const nextSchedule =
-      await scheduleService(
-        service
-      );
+    const nextSchedule = manual
+      ? null
+      : await scheduleService(service);
 
 
-    let caption =
-      `📸 ${service.name}`;
+    let caption = manual
+      ? "📸 " + service.name + "\n⚡ Manual Telegram request"
+      : `📸 ${service.name}`;
 
 
     if (nextSchedule) {
@@ -1058,12 +1066,96 @@ async function runService(serviceId) {
     );
 
 
-    // If the screenshot/send process failed,
-    // schedule the next run here.
-    await scheduleService(
-      service
-    );
+    // Automatic runs keep their normal schedule.
+    // Manual Telegram requests must not change it.
+    if (!manual) {
+      await scheduleService(service);
+    }
   }
+}
+
+
+// --------------------------------------------------
+// Telegram command polling
+// --------------------------------------------------
+
+async function pollTelegramCommands() {
+  if (telegramPollInProgress) return;
+  telegramPollInProgress = true;
+
+  try {
+    const data = await getData();
+    const state = await chrome.storage.local.get({
+      telegramUpdateOffset: null,
+      telegramPollStartedAt: null
+    });
+
+    // Ignore messages that were already waiting before this feature first started.
+    let startedAt = state.telegramPollStartedAt;
+    if (!Number.isFinite(startedAt)) {
+      startedAt = Math.floor(Date.now() / 1000);
+      await chrome.storage.local.set({ telegramPollStartedAt: startedAt });
+    }
+
+    if (!data.botToken || !data.chatId) return;
+
+    const params = new URLSearchParams({
+      timeout: "0",
+      allowed_updates: JSON.stringify(["message"])
+    });
+    if (Number.isFinite(state.telegramUpdateOffset)) {
+      params.set("offset", String(state.telegramUpdateOffset));
+    }
+
+    const response = await fetch(
+      TELEGRAM_API + data.botToken + "/getUpdates?" + params.toString()
+    );
+    const result = await response.json();
+
+    if (!response.ok || !result.ok) {
+      console.error("Telegram command polling failed:", result.description || response.statusText);
+      return;
+    }
+
+    for (const update of result.result || []) {
+      // Advance offset before processing to prevent duplicate execution after a restart.
+      await chrome.storage.local.set({ telegramUpdateOffset: update.update_id + 1 });
+
+      const message = update.message;
+      if (!message || !message.chat) continue;
+      if (String(message.chat.id) !== String(data.chatId)) continue;
+      if (message.from && message.from.is_bot) continue;
+      if (!Number.isFinite(message.date) || message.date < startedAt) continue;
+
+      const match = String(message.text || "").trim().match(/^now\s+(\d+)$/i);
+      if (!match) continue;
+
+      const serviceNumber = Number(match[1]);
+      if (!Number.isSafeInteger(serviceNumber) || serviceNumber < 1) continue;
+
+      // Match the same ordering as popup.js: Object.values(services).
+      const services = Object.values(data.services || {});
+      const service = services[serviceNumber - 1];
+      if (!service) {
+        console.warn("Telegram command requested missing service number " + serviceNumber + ".");
+        continue;
+      }
+
+      console.log("Telegram command received: now " + serviceNumber + " -> " + service.name);
+      // Manual commands bypass Sleep Mode and enabled state without changing the schedule.
+      await runService(service.id, { manual: true });
+    }
+  } catch (error) {
+    console.error("Telegram command polling error:", error);
+  } finally {
+    telegramPollInProgress = false;
+  }
+}
+
+
+async function ensureTelegramPolling() {
+  await chrome.alarms.create(TELEGRAM_POLL_ALARM, { periodInMinutes: 1 });
+  await pollTelegramCommands();
 }
 
 
@@ -1073,6 +1165,11 @@ async function runService(serviceId) {
 
 chrome.alarms.onAlarm.addListener(
   async alarm => {
+
+    if (alarm.name === TELEGRAM_POLL_ALARM) {
+      await pollTelegramCommands();
+      return;
+    }
 
     if (
       !alarm.name.startsWith(
@@ -1561,6 +1658,22 @@ async function handleMessage(message) {
     error: "Unknown message type."
   };
 }
+
+
+// --------------------------------------------------
+// Start Telegram command polling
+// --------------------------------------------------
+
+chrome.runtime.onInstalled.addListener(() => {
+  ensureTelegramPolling();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  ensureTelegramPolling();
+});
+
+// Initialize on service-worker load/reload too.
+ensureTelegramPolling();
 
 
 // --------------------------------------------------
